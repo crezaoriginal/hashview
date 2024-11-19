@@ -10,6 +10,7 @@ import psutil
 import re
 import signal
 import builtins
+import time
 from threading import Thread
 
 
@@ -160,7 +161,7 @@ def sync_rules():
             # generate checksum
             print('Comparing checksums')
             sha256_hash = hashlib.sha256()
-            with open('control/tmp/'+random_hex, 'rb') as f:
+            with open('control/tmp/'+random_hex+'.gz', 'rb') as f:
                 for byte_block in iter(lambda: f.read(4096),b""):
                     sha256_hash.update(byte_block)                
             print('Local: ' + str(sha256_hash.hexdigest()))
@@ -175,7 +176,7 @@ def sync_rules():
                 os.system(cmd)
             else:
                 print('hashes dont match. what do we do now?')
-                os.remove('control/tmp/' + random_hex)
+                os.remove('control/tmp/' + random_hex+'.gz')
         elif currently_has_rule == True and mismatched_rule == False:
             new_rules_manifest.write(str(entry['id']) + '|' + entry['checksum'] + '|' + entry['path'].split('/')[-1] + '\n')
     # move new manifest into correct directory
@@ -207,38 +208,44 @@ def sync_wordlists():
 
                     # remove the wordlist file on disk (if it exists)
                     # TODO change to try catch
-                    os.remove('control/wordlists/' + wordlists_manifest_entry.split('|')[2].rstrip())
+                    if os.path.isfile('control/wordlists/' + wordlists_manifest_entry.split('|')[2].rstrip()):
+                        os.remove('control/wordlists/' + wordlists_manifest_entry.split('|')[2].rstrip())
                     
                     # download wordlists file
                     random_hex = secrets.token_hex(8)
                     compressed_wordlists_file_content = api.get_wordlists_file(entry['id'])
-                    local_compressed_wordlist = open('control/tmp/'+ random_hex + '.gz', 'wb')
+                    local_compressed_wordlist = open('control/tmp/'+ random_hex, 'wb')
                     local_compressed_wordlist.write(compressed_wordlists_file_content)
                     local_compressed_wordlist.close()                
                     
                     # decompress wordlist file
-                    cmd = 'gunzip control/tmp/' + random_hex + '.gz'
+                    cmd = 'gunzip control/tmp/' + random_hex
                     os.system(cmd)                    
-                            
-                    # generate checksum
-                    print('Comparing checksums')
-                    sha256_hash = hashlib.sha256()
-                    with open('control/tmp/'+random_hex, 'rb') as f:
-                        for byte_block in iter(lambda: f.read(4096),b""):
-                            sha256_hash.update(byte_block)                
-                    print('Local: ' + str(sha256_hash.hexdigest()))
-                    print('Remote: ' + str(entry['checksum']))
+                        
+                    if os.path.isfile('control/tmp/'+random_hex):
+                        # generate checksum
+                        print('Comparing checksums')
+                        sha256_hash = hashlib.sha256()
+                        with open('control/tmp/'+random_hex, 'rb') as f:
+                            for byte_block in iter(lambda: f.read(4096),b""):
+                                sha256_hash.update(byte_block)                
+                        print('Local: ' + str(sha256_hash.hexdigest()))
+                        print('Remote: ' + str(entry['checksum']))
 
-                    if sha256_hash.hexdigest() == entry['checksum']:
-                        print('Checksums match!')
-                        # create new manifest entry    
-                        new_wordlists_manifest.write(str(entry['id']) + '|' + sha256_hash.hexdigest() + '|' + entry['path'].split('/')[-1] + '\n')
-                        # move & rename wordlist file to match that of whats expected in the hashcat command
-                        cmd = 'mv control/tmp/' + random_hex + ' control/wordlists/' + entry['path'].split('/')[-1]
-                        os.system(cmd)
+                        if sha256_hash.hexdigest() == entry['checksum']:
+                            print('Checksums match!')
+                            # create new manifest entry    
+                            new_wordlists_manifest.write(str(entry['id']) + '|' + sha256_hash.hexdigest() + '|' + entry['path'].split('/')[-1] + '\n')
+                            # move & rename wordlist file to match that of whats expected in the hashcat command
+                            cmd = 'mv control/tmp/' + random_hex + ' control/wordlists/' + entry['path'].split('/')[-1]
+                            os.system(cmd)
+                        else:
+                            print('hashes dont match. what do we do now?')
+                            os.remove('control/tmp/' + random_hex)
                     else:
-                        print('hashes dont match. what do we do now?')
-                        os.remove('control/tmp/' + random_hex)
+                        print('Failed to decompress file')
+                        sync_wordlists()
+
             
         # We've compared the two lists, now if we didnt have the entry before it means its a new wordlist file and we need to download it.
         if currently_has_wordlist == False:
@@ -246,7 +253,7 @@ def sync_wordlists():
             # download wordlist file
             random_hex = secrets.token_hex(8)
             compressed_wordlists_file_content = api.get_wordlists_file(entry['id'])
-            local_compressed_wordlist = open('control/tmp/'+ random_hex + '.gz', 'wb')
+            local_compressed_wordlist = open('control/tmp/'+ random_hex, 'wb')
             local_compressed_wordlist.write(compressed_wordlists_file_content)
             local_compressed_wordlist.close()
 
@@ -464,13 +471,8 @@ if __name__ == '__main__':
 
                 # Set status to complete
                 updateJobTaskResponse = updateJobTask(job_task['id'], 'Completed')
-                try:
-                    if updateJobTaskResponse['msg'] == 'OK':
-                        print('[*] Task Successfully Set to Completed')
-                    with suppress(Exception):
-                        pass
-                finally:
-                    pass
+                if updateJobTaskResponse['msg'] == 'OK':
+                    print('[*] Task Successfully Set to Completed')
 
         print('[*] Sleeping')
         time.sleep(10)
